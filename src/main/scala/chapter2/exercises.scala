@@ -192,6 +192,115 @@ object Exercise7 {
   
 }
 
-object Exercise8 {
+class PriorityTaskPool(workerThreads: Int = 1, priority: Int = 1) {
+  import scala.collection.mutable.PriorityQueue
+  given Ordering[(Int, () => Unit)] = Ordering.by(_._1)
+  private val tasks = new PriorityQueue[(Int, () => Unit)]
+  @volatile private var terminated = false
+
+  def asynchronous(priority: Int)(task: => Unit): Unit = tasks.synchronized {
+    tasks.enqueue((priority, () => task))
+    tasks.notify()
+  }
+  
+  private def poll: Option[(Int, () => Unit)] = tasks.synchronized {
+    while(tasks.isEmpty) tasks.wait()
+    Some(tasks.dequeue())
+  }
+  
+  def shutdown(): Unit = tasks.synchronized {
+    terminated = true
+    tasks.notify()
+  }
+  
+  class Worker extends Thread {
+    setDaemon(true)
+    override def run(): Unit = {
+      while(true) {
+        poll.collect {
+          case (p, task) if p >= priority || !terminated => task()
+        }
+      }
+    }
+  }
+  (1 to workerThreads).map { _ =>
+    Worker().start()
+  }
   
 }
+
+object Exercise8 {
+  val taskPool = new PriorityTaskPool
+
+  def main(args: Array[String]): Unit = {
+    (1 to 100).foreach(i => {
+      taskPool.asynchronous(i){ println(s" priority is $i") }
+    })
+    Thread.sleep(10000)
+  }
+}
+
+object Exercise9 {
+  val taskPool = new PriorityTaskPool(10)
+
+  def main(args: Array[String]): Unit = {
+    (1 to 100).foreach { _ =>
+      val priority = (Math.random() * 1000).toInt
+      taskPool.asynchronous(priority){ println(s" priority is $priority") }
+    }
+    Thread.sleep(1000)
+    
+  }
+}
+
+object Exercise10 {
+  val taskPool = new PriorityTaskPool(10, 1000)
+
+  def main(args: Array[String]): Unit = {
+    (1 to 100000).foreach { i =>
+      val priority = (Math.random() * 1000).toInt
+      taskPool.asynchronous(priority){ println(s" priority is $i") }
+    }
+    Thread.sleep(1)
+    taskPool.shutdown()
+  }
+}
+
+trait CBiMap[K, V] {
+  def put(k: K, v: V): Option[(K, V)]
+  def removeKey(k: K): Option[V]
+  def removeValue(v: V): Option[K]
+  def getValue(k: K): Option[V]
+  def getKey(v: V): Option[K]
+  def size: Int
+  def iterator: Iterator[(K, V)]
+}
+
+class ConcurrentBiMap[K, V] extends CBiMap[K, V] {
+  @volatile
+  private val mapContents = scala.collection.mutable.Map[K, V]()
+  
+  override def put(k: K, v: V): Option[(K,V)] = mapContents.synchronized {
+    mapContents.update(k, v)
+    Some((k, v))
+  }
+
+  override def removeKey(k: K): Option[V] = mapContents.synchronized {
+    mapContents.remove(k)
+  }
+
+  override def getKey(v: V): Option[K] = mapContents.synchronized {
+    mapContents.filterInPlace((_, value) => value == v).headOption.map(_._1)
+  }
+
+  override def getValue(k: K): Option[V] = ???
+
+  override def removeValue(v: V): Option[K] = ???
+
+  override def iterator: Iterator[(K, V)] = ???
+
+  override def size: Int = ???
+  
+}
+
+
